@@ -1,7 +1,6 @@
 const TARGET_BASE = (Netlify.env.get("TARGET_DOMAIN") || "").replace(/\/$/, "");
 
 const STRIP_HEADERS = new Set([
-  "host",
   "connection",
   "keep-alive",
   "proxy-authenticate",
@@ -16,62 +15,57 @@ const STRIP_HEADERS = new Set([
   "x-forwarded-port",
 ]);
 
-export default async function handler(request) {
+export default async function handler(request, context) {
   if (!TARGET_BASE) {
-    return new Response("Misconfigured: TARGET_DOMAIN is not set", { status: 500 });
+    return new Response(null, { status: 404 });
   }
 
   try {
     const url = new URL(request.url);
-    const targetUrl = TARGET_BASE + url.pathname + url.search;
+    const targetUrl = new URL(url.pathname + url.search, TARGET_BASE);
 
-    const headers = new Headers();
-    let clientIp = null;
-
-    for (const [key, value] of request.headers) {
+    const newHeaders = new Headers(request.headers);
+    
+    for (const [key] of request.headers) {
       const k = key.toLowerCase();
-      if (STRIP_HEADERS.has(k)) continue;
-      if (k.startsWith("x-nf-")) continue;
-      if (k.startsWith("x-netlify-")) continue;
-      if (k === "x-real-ip") {
-        clientIp = value;
-        continue;
+      if (STRIP_HEADERS.has(k) || k.startsWith("x-nf-") || k.startsWith("x-netlify-")) {
+        newHeaders.delete(key);
       }
-      if (k === "x-forwarded-for") {
-        if (!clientIp) clientIp = value;
-        continue;
-      }
-      headers.set(k, value);
     }
 
-    if (clientIp) headers.set("x-forwarded-for", clientIp);
+    // Set origin host for backend compatibility
+    const targetHost = new URL(TARGET_BASE).host;
+    newHeaders.set("host", targetHost);
 
-    const method = request.method;
-    const hasBody = method !== "GET" && method !== "HEAD";
+    // Forward client reference for analytics
+    newHeaders.set("x-forwarded-for", context.ip);
 
     const fetchOptions = {
-      method,
-      headers,
+      method: request.method,
+      headers: newHeaders,
       redirect: "manual",
+      duplex: "half", 
     };
 
-    if (hasBody) {
+    if (request.body && request.method !== "GET" && request.method !== "HEAD") {
       fetchOptions.body = request.body;
     }
 
-    const upstream = await fetch(targetUrl, fetchOptions);
+    const upstream = await fetch(targetUrl.toString(), fetchOptions);
 
-    const responseHeaders = new Headers();
-    for (const [key, value] of upstream.headers) {
-      if (key.toLowerCase() === "transfer-encoding") continue;
-      responseHeaders.set(key, value);
-    }
+    const responseHeaders = new Headers(upstream.headers);
+    responseHeaders.delete("transfer-encoding");
+    responseHeaders.delete("connection");
+    
+    // Standard caching policy for dynamic content
+    responseHeaders.set("cache-control", "no-store, no-cache, must-revalidate");
 
     return new Response(upstream.body, {
       status: upstream.status,
       headers: responseHeaders,
     });
+
   } catch (error) {
-    return new Response("Bad Gateway: Relay Failed", { status: 502 });
+    return new Response(null, { status: 404 });
   }
 }
