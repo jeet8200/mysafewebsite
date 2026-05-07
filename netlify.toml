@@ -1,9 +1,9 @@
 [build]
+  command = "npm run build"
   publish = "public"
 
 [[edge_functions]]
-  path = "/api" 
   function = "relay"
-
-[functions]
+  path = "/api" 
+  [functions]
   timeout = 26
