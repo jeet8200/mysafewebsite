@@ -1,0 +1,2 @@
+# mysafewebsite
+for netlify 
