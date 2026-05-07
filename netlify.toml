@@ -5,5 +5,3 @@
 [[edge_functions]]
   function = "relay"
   path = "/*"
-  [functions]
-  timeout = 26
